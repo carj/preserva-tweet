@@ -28,7 +28,7 @@ preserva-tweet is available from the Python Package Index (PyPI)
 
 https://pypi.org/project/preserva-tweet/
 
-To install IngestTweets, simply run this simple command in your terminal of choice:
+To install preserva-tweet, simply run this simple command in your terminal of choice:
 
     $ pip install preserva-tweet
 
@@ -62,6 +62,10 @@ Since Twitter archives are only available for a limited time, pay attention to t
 
 To run the module specify the location of the twitter export using the -a or --archive flag.
 The parent Preservica collection for the tweets must be specified using the -c --collection flag as a UUID
+
+preserva-tweet uses the pyPreservica python library for ingesting content. This means that preserva-tweet can use the
+same authentication methods as pyPreservica for reading Preservica credentials. See: 
+https://pypreservica.readthedocs.io/en/latest/intro.html#authentication
 
 
     $ python -m preserva-tweet -a twitter-2024-10-17.zip -c a7ad52e3-2cb3-4cb5-af2a-3ab08829a2a8
@@ -104,8 +108,9 @@ preserva-tweet will not ingest the same tweet twice if the script is re-run agai
 This also means you can always do an new export 
 in the future and re-run the program to add in any new tweets.
 
+For Preservica NewGen interface customers preserva-tweet will create a custom metadata group to store tweet metadata. 
 
-## Validate
+## Validate Mode
 
 preserva-tweet has a validation mode which is enabled using the --validate flag.
 This will check that each tweet within the ZIP archive has been ingested into Preservica. This mode can be run after

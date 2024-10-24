@@ -17,7 +17,8 @@ from typing import Generator
 from urllib.parse import urlparse
 from xml.etree import ElementTree
 import shutil
-
+from dateutil import *
+from dateutil.parser import *
 from pyPreservica import *
 
 TWEET_LABEL = "window.YTD.tweets.part0"
@@ -35,6 +36,63 @@ PROFILE_MEDIA = "profile_media"
 TWEETS_FOLDER = "Tweets"
 REPLIES_FOLDER = "Replies"
 RETWEETS_FOLDER = "Retweets"
+
+TWITTER_SCHEMA_NS = "http://www.preservica.com/metadata/group/twitter"
+
+
+def group_metadata(metadata: MetadataGroupsAPI):
+    # does Twitter metadata
+    twitter_group_exists = False
+    for group in metadata.groups():
+        if group.schemaUri == TWITTER_SCHEMA_NS:
+            twitter_group_exists = True
+            break
+
+    if not twitter_group_exists:
+        fields = []
+        fields.append(GroupField(field_id="tweet_id", name="tweet_id", field_type=GroupFieldType.STRING, visible=True,
+                                 indexed=True, editable=True, minOccurs=1, maxOccurs=1))
+        fields.append(GroupField(field_id="full_text", name="Full Text", field_type=GroupFieldType.STRING, visible=True,
+                                 indexed=True, editable=True, minOccurs=1, maxOccurs=1))
+        fields.append(GroupField(field_id="created_at", name="Created At", field_type=GroupFieldType.DATE, visible=True,
+                                 indexed=True, editable=True, minOccurs=1, maxOccurs=1))
+        fields.append(
+            GroupField(field_id="screen_name_sender", name="User Name", field_type=GroupFieldType.STRING, visible=True,
+                       indexed=True, editable=True))
+
+        fields.append(
+            GroupField(field_id="hashtag", name="Hash Tag", field_type=GroupFieldType.STRING, visible=True,
+                       indexed=True, editable=True, minOccurs=0, maxOccurs=-1))
+
+        fields.append(
+            GroupField(field_id="screen_name_mention", name="Mentioned", field_type=GroupFieldType.STRING, visible=True,
+                       indexed=True, editable=True, minOccurs=0, maxOccurs=-1))
+
+        fields.append(
+            GroupField(field_id="in_reply_to_screen_name", name="In Reply To Tweet User",
+                       field_type=GroupFieldType.STRING, visible=True,
+                       indexed=True, editable=True, minOccurs=0, maxOccurs=1))
+        fields.append(
+            GroupField(field_id="in_reply_to_user_id_str", name="In Reply To Tweet ID",
+                       field_type=GroupFieldType.STRING, visible=True,
+                       indexed=True, editable=True, minOccurs=0, maxOccurs=1))
+
+        fields.append(
+            GroupField(field_id="retweet", name="Retweets",
+                       field_type=GroupFieldType.NUMBER, visible=True,
+                       indexed=True, editable=True, minOccurs=0, maxOccurs=1))
+
+        fields.append(
+            GroupField(field_id="likes", name="Likes",
+                       field_type=GroupFieldType.NUMBER, visible=True,
+                       indexed=True, editable=True, minOccurs=0, maxOccurs=1))
+
+        fields.append(
+            GroupField(field_id="expanded_url", name="URLS",
+                       field_type=GroupFieldType.STRING, visible=True,
+                       indexed=True, editable=True, minOccurs=0, maxOccurs=-1))
+
+        metadata.add_group(group_name="Twitter", group_description="Tweet Metadata", fields=fields)
 
 
 def main():
@@ -102,11 +160,15 @@ def main():
             print(f"Using credentials from command line")
         entity: EntityAPI = EntityAPI(username=username, password=password, server=server)
         upload: UploadAPI = UploadAPI(username=username, password=password, server=server)
+        groups: MetadataGroupsAPI = MetadataGroupsAPI(username=username, password=password, server=server)
     else:
         if verbose:
             print(f"Using credentials from credentials.properties file")
         entity: EntityAPI = EntityAPI()
         upload: UploadAPI = UploadAPI()
+        groups: MetadataGroupsAPI = MetadataGroupsAPI()
+
+    group_metadata(groups)
 
     # Check the preservica folder uuid provided on the command line is valid
     try:
@@ -402,7 +464,7 @@ def ingest_tweets(zip_folder: str, parent_folder: Folder, entity: EntityAPI, upl
     account_info: AccountInfo = get_account_info(account_json)
     profile_info: ProfileInfo = get_profile_info(profile_json)
 
-    xml.etree.ElementTree.register_namespace("", "http://www.preservica.com/tweets/v1")
+    xml.etree.ElementTree.register_namespace("", TWITTER_SCHEMA_NS)
 
     account_folder = None
     if not dry_run:
@@ -494,20 +556,24 @@ def ingest_tweets(zip_folder: str, parent_folder: Folder, entity: EntityAPI, upl
 
             add_media(tweet['tweet'], zip_folder, content_objects, account_info.username, tweet_id)
 
-            xml_object = xml.etree.ElementTree.Element('tweet', {"xmlns": "http://www.preservica.com/tweets/v1"})
-            xml.etree.ElementTree.SubElement(xml_object, "id").text = tweet['tweet']['id_str']
+            xml_object = xml.etree.ElementTree.Element('twitter', {"xmlns": TWITTER_SCHEMA_NS})
+            xml.etree.ElementTree.SubElement(xml_object, "tweet_id").text = tweet['tweet']['id_str']
             xml.etree.ElementTree.SubElement(xml_object, "full_text").text = tweet['tweet']['full_text']
-            xml.etree.ElementTree.SubElement(xml_object, "created_at").text = tweet['tweet']['created_at']
+
+            created_date = tweet['tweet']['created_at']
+            dt = parse(created_date)
+            xml.etree.ElementTree.SubElement(xml_object, "created_at").text = dt.isoformat()
+
             xml.etree.ElementTree.SubElement(xml_object, "screen_name_sender").text = account_info.accountDisplayName
 
-            if 'hashtags' in tweet['tweet']:
-                hashtags = tweet['tweet']['hashtags']
+            if 'hashtags' in tweet['tweet']['entities']:
+                hashtags = tweet['tweet']['entities']['hashtags']
                 if hashtags is not None:
                     for h in hashtags:
                         xml.etree.ElementTree.SubElement(xml_object, "hashtag").text = str(h['text'])
 
-            if 'user_mentions' in tweet['tweet']:
-                user_mentions = tweet['tweet']['user_mentions']
+            if 'user_mentions' in tweet['tweet']['entities']:
+                user_mentions = tweet['tweet']['entities']['user_mentions']
                 if user_mentions is not None:
                     for h in user_mentions:
                         xml.etree.ElementTree.SubElement(xml_object, "screen_name_mention").text = str(h['screen_name'])
@@ -516,8 +582,18 @@ def ingest_tweets(zip_folder: str, parent_folder: Folder, entity: EntityAPI, upl
                 in_reply_to_screen_name = tweet['tweet']['in_reply_to_screen_name']
                 xml.etree.ElementTree.SubElement(xml_object, "in_reply_to_screen_name").text = in_reply_to_screen_name
 
+            if 'in_reply_to_user_id_str' in tweet['tweet']:
+                in_reply_to_user_id_str = tweet['tweet']['in_reply_to_user_id_str']
+                xml.etree.ElementTree.SubElement(xml_object, "in_reply_to_user_id_str").text = in_reply_to_user_id_str
+
             xml.etree.ElementTree.SubElement(xml_object, "retweet").text = str(tweet['tweet']['retweet_count'])
             xml.etree.ElementTree.SubElement(xml_object, "likes").text = str(tweet['tweet']['favorite_count'])
+
+            if 'urls' in tweet['tweet']['entities']:
+                urls = tweet['tweet']['entities']['urls']
+                if urls is not None:
+                    for url in urls:
+                        xml.etree.ElementTree.SubElement(xml_object, "expanded_url").text = str(url['expanded_url'])
 
             xml_request = xml.etree.ElementTree.tostring(xml_object, encoding='utf-8')
 
@@ -525,7 +601,7 @@ def ingest_tweets(zip_folder: str, parent_folder: Folder, entity: EntityAPI, upl
             metadata_document.write(xml_request.decode("utf-8"))
             metadata_document.close()
 
-            asset_metadata = {"http://www.preservica.com/tweets/v1": f"{tweet_id}-metadata.xml"}
+            asset_metadata = {TWITTER_SCHEMA_NS: f"{tweet_id}-metadata.xml"}
 
             asset_title = str(tweet['tweet']['full_text'])
             asset_description = str(tweet['tweet']['id_str'])

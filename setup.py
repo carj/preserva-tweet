@@ -21,7 +21,7 @@ if sys.argv[-1] == 'publish':
 # This call to setup() does all the work
 setup(
     name=PKG,
-    version="0.3.0",
+    version="0.4.0",
     description="Python module for ingesting Twitter exports into Preservica",
     long_description=README,
     long_description_content_type="text/markdown",
@@ -41,7 +41,7 @@ setup(
         "Topic :: System :: Archiving",
     ],
     keywords='Preservica API Preservation Twitter',
-    install_requires=["pyPreservica"],
+    install_requires=["pyPreservica", "python-dateutil"],
     project_urls={
         'Documentation': 'https://github.com/carj/preserva-tweet',
         'Source': 'https://github.com/carj/preserva-tweet',
