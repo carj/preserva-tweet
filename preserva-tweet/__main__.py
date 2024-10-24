@@ -16,6 +16,7 @@ import zipfile
 from typing import Generator
 from urllib.parse import urlparse
 from xml.etree import ElementTree
+import shutil
 
 from pyPreservica import *
 
@@ -37,9 +38,16 @@ RETWEETS_FOLDER = "Retweets"
 
 
 def main():
+    """
+    Entry point for the module when run as python -m preserva-tweet
+
+    Sets up the command line arguments and starts either the ingest or validation
+
+    :return: 0
+    """
     parser = argparse.ArgumentParser(
         prog='preserva-tweet',
-        description='Ingest a Twitter Account History into Preservica',
+        description='Ingest a Twitter Account History Export into Preservica',
         epilog='')
 
     parser.add_argument("-a", "--archive", type=pathlib.Path, help="Twitter export ZIP archive path", required=True)
@@ -47,18 +55,21 @@ def main():
 
     parser.add_argument("-v", "--verbose", action='store_const', help="Print information as tweets are ingested",
                         required=False, default=False, const=True)
-    parser.add_argument("-d", "--dry-run", help="Validate the twitter export without ingesting",
+    parser.add_argument("-d", "--dry-run", help="process the twitter export without ingesting",
                         default=False, action='store_const', const=True)
 
     parser.add_argument("-u", "--username", type=str,
                         help="Your Preservica username if not using credentials.properties", required=False)
     parser.add_argument("-p", "--password", type=str,
-                        help="Your Preservica password f not using credentials.properties", required=False)
+                        help="Your Preservica password if not using credentials.properties", required=False)
     parser.add_argument("-s", "--server", type=str,
                         help="Your Preservica server domain name if not using credentials.properties", required=False)
 
     parser.add_argument("-t", "--security-tag", type=str, default="open",
                         help="The Preservica security tag of the ingested tweets (default is \"open\")", required=False)
+
+    parser.add_argument("--validate", help="Validate the twitter ingest to check for missing tweets",
+                        default=False, action='store_const', const=True)
 
     args = parser.parse_args()
     cmd_line = vars(args)
@@ -67,6 +78,10 @@ def main():
     dry_run = False
     if 'dry_run' in cmd_line:
         dry_run = bool(cmd_line['dry_run'])
+
+    validate_ingest = False
+    if 'validate' in cmd_line:
+        validate_ingest = bool(cmd_line['validate'])
 
     verbose = False
     if 'verbose' in cmd_line:
@@ -93,11 +108,12 @@ def main():
         entity: EntityAPI = EntityAPI()
         upload: UploadAPI = UploadAPI()
 
+    # Check the preservica folder uuid provided on the command line is valid
     try:
         parent_folder = entity.folder(collection)
         if verbose:
             print(f"Ingesting Twitter Archive into {parent_folder.title}")
-    except ReferenceNotFoundException as e:
+    except ReferenceNotFoundException:
         print(f"The collection uuid has not be found")
         return 1
 
@@ -108,17 +124,24 @@ def main():
         if verbose:
             print(f"Processing tweet export: {archive_path}")
 
+        # unzip the archive into a temp directory which is cleaned up at the end
         with tempfile.TemporaryDirectory() as tmp_dir:
             if verbose:
                 print(f"Extracting tweets into {tmp_dir}")
             with zipfile.ZipFile(archive_path, 'r') as zip_ref:
                 zip_ref.extractall(tmp_dir)
-            if verbose:
-                if dry_run:
-                    print(f"Running Ingest in dry-run mode, tweets will not be ingested")
-                else:
-                    print(f"Running Ingest in production mode, tweets will be ingested")
-            ingest_tweets(tmp_dir, parent_folder, entity, upload, security_tag, dry_run, verbose)
+
+            if validate_ingest:
+                print(f"Running validation mode only, tweets will not be ingested")
+                validate(zip_folder=tmp_dir, entity=entity, verbose=verbose)
+            else:
+                if verbose:
+                    if dry_run:
+                        print(f"Running Ingest in dry-run mode, tweets will not be ingested")
+                    else:
+                        print(f"Running Ingest in production mode, tweets will be ingested")
+
+                ingest_tweets(tmp_dir, parent_folder, entity, upload, security_tag, dry_run, verbose)
     else:
         print(f"{archive_path} is not a valid path")
 
@@ -126,14 +149,17 @@ def main():
 
 
 class ProgressConsoleCallback:
+    """
+    callback class to show the progress
+    """
 
-    def __init__(self, total_tweets: int, prefix='Progress:', suffix='', length=100, fill='█', printEnd="\r",
+    def __init__(self, total_tweets: int, prefix='Progress:', suffix='', length=100, fill='█', print_end="\r",
                  verbose: bool = True):
         self.prefix = prefix
         self.suffix = suffix
         self.length = length
         self.fill = fill
-        self.printEnd = printEnd
+        self.printEnd = print_end
         self._size: int = int(total_tweets)
         self._seen_so_far: int = 0
         self._lock = threading.Lock()
@@ -182,29 +208,55 @@ class AccountInfo:
 
 def get_image(media: dict, zip_folder: str, has_video_element: bool, media_id_str: str, twitter_user: str,
               tweet_id: str):
+    """
+    Find the image file from the tweet, first looks up images in the media folder
+    :param media:
+    :param zip_folder:
+    :param has_video_element:
+    :param media_id_str:
+    :param twitter_user:
+    :param tweet_id:
+    :return:
+    """
     media_url_https = media["media_url_https"]
     if media_url_https:
         image_path = urlparse(media_url_https).path
         image_path = image_path[image_path.rfind("/") + 1:]
         image_name = f"{tweet_id}-{image_path}"
-        image = os.path.join(os.path.join(os.path.join(zip_folder, DATA_FOLDER), TWEETS_MEDIA),
-                             image_name)
-        if os.path.exists(image) is True:
-            return image
+        image = os.path.join(os.path.join(os.path.join(zip_folder, DATA_FOLDER), TWEETS_MEDIA), image_name)
+
+        if has_video_element:
+            dest = f"{{{media_id_str}}}_[{twitter_user}]_thumb.jpg"
+        else:
+            dest = f"{{{media_id_str}}}_[{twitter_user}].jpg"
+        if os.path.exists(image):
+            shutil.copy(image, dest)
+            if os.path.exists(dest) is True:
+                return dest
         else:
             req = requests.get(media_url_https)
             if req.status_code == requests.codes.ok:
                 if has_video_element:
-                    image_name_ = f"{{{media_id_str}}}_[{twitter_user}]_thumb.jpg"
+                    image = f"{{{media_id_str}}}_[{twitter_user}]_thumb.jpg"
                 else:
-                    image_name_ = f"{{{media_id_str}}}_[{twitter_user}].jpg"
-                image_name_document_ = open(image_name_, "wb")
+                    image = f"{{{media_id_str}}}_[{twitter_user}].jpg"
+                image_name_document_ = open(image, "wb")
                 image_name_document_.write(req.content)
                 image_name_document_.close()
-                return image_name_
+                return image
 
 
 def get_video(media: dict, zip_folder: str, media_id_str: str, twitter_user: str, tweet_id: str):
+    """
+    Try and fetch a video from the zip archive, if its not available download it directly
+    from the twitter server
+    :param media:
+    :param zip_folder:
+    :param media_id_str:
+    :param twitter_user:
+    :param tweet_id:
+    :return:
+    """
     video_info = media["video_info"]
     variants = video_info["variants"]
     for v in variants:
@@ -214,8 +266,11 @@ def get_video(media: dict, zip_folder: str, media_id_str: str, twitter_user: str
             video_path = video_path[video_path.rfind("/") + 1:]
             video_name = f"{tweet_id}-{video_path}"
             video_name = os.path.join(os.path.join(os.path.join(zip_folder, DATA_FOLDER), TWEETS_MEDIA), video_name)
+            dest = f"{{{media_id_str}}}_[{twitter_user}].mp4"
             if os.path.exists(video_name) is True:
-                return video_name, True
+                shutil.copy(video_name, dest)
+                if os.path.exists(dest) is True:
+                    return dest, True
             else:
                 with requests.get(video_url, stream=True) as req:
                     video_name = f"{{{media_id_str}}}_[{twitter_user}].mp4"
@@ -252,8 +307,8 @@ def manifest(account_document: str, verbose: bool = False):
         updated_doc = json_data.replace(f"{MANIFEST_LABEL} =", "")
         manifest_info = json.loads(updated_doc)
         if verbose:
-            print(f"Found Export for account name: {manifest_info['userInfo']['userName']}")
-            print(f"Found Export for account id: {manifest_info['userInfo']['accountId']}")
+            print(f"Found Export for account name: {manifest_info['userInfo']['userName']} "
+                  f" {manifest_info['userInfo']['accountId']}")
         json_files = manifest_info['dataTypes']['tweets']['files']
 
     return json_files
@@ -275,6 +330,60 @@ def get_profile_image(zip_folder, avatar_media_url: str, account_id: str):
             return image_name_document
 
 
+def validate(zip_folder: str, entity: EntityAPI, verbose: bool):
+    """
+    Validate the ingest, check if each tweet has been ingested.
+    :param zip_folder:
+    :param entity:
+    :param verbose:
+    :return:
+    """
+    if os.path.isdir(zip_folder) is False:
+        print("The tweet export directory is not a folder")
+        return
+
+    subfolders = [f.name for f in os.scandir(zip_folder) if f.is_dir()]
+    assert len(subfolders) == 2
+    assert 'data' in subfolders
+    assert 'assets' in subfolders
+    data_folder = os.path.join(zip_folder, 'data')
+    assert os.path.isdir(data_folder)
+    manifest_json = os.path.join(data_folder, 'manifest.js')
+    json_files = manifest(manifest_json, verbose)
+
+    total_tweets = 0
+    for jf in json_files:
+        total_tweets = int(jf['count'])
+
+    not_ingested = []
+
+    print(f"The Archive contains {total_tweets} tweets")
+    for jf in json_files:
+
+        tweet_json = os.path.join(zip_folder, jf['fileName'])
+
+        for tweet in split_into_docs(tweet_json, jf['globalName']):
+            tweet_id: str = tweet['tweet']['id_str']
+
+            set_assets = entity.identifier(TWEET_ID, tweet_id)
+            if len(set_assets) > 0:
+                print(f"Tweet {tweet_id} has been ingested")
+            else:
+                print(f"Tweet {tweet_id} has not been ingested")
+                not_ingested.append(tweet['tweet'])
+
+    if len(not_ingested) == 0:
+        print(f"All Tweets have beem ingested")
+    else:
+        print(f"The following tweets have not been ingested")
+        for t in not_ingested:
+            title = t['full_text']
+            title = (title[:50] + '..') if len(title) > 50 else title
+            print(f"{t['id_str']}: {title}")
+        print("")
+        print(f"** Rerun the script again to ingest the missing tweets **")
+
+
 def ingest_tweets(zip_folder: str, parent_folder: Folder, entity: EntityAPI, upload: UploadAPI,
                   security_tag: str = "open", dry_run: bool = False, verbose: bool = False):
     if os.path.isdir(zip_folder) is False:
@@ -292,6 +401,8 @@ def ingest_tweets(zip_folder: str, parent_folder: Folder, entity: EntityAPI, upl
     json_files = manifest(manifest_json, verbose)
     account_info: AccountInfo = get_account_info(account_json)
     profile_info: ProfileInfo = get_profile_info(profile_json)
+
+    xml.etree.ElementTree.register_namespace("", "http://www.preservica.com/tweets/v1")
 
     account_folder = None
     if not dry_run:
@@ -323,15 +434,19 @@ def ingest_tweets(zip_folder: str, parent_folder: Folder, entity: EntityAPI, upl
 
     current_tweet: int = 0
 
+    ingest_tweet_folder = None
+    ingest_retweet_folder = None
+    ingest_replies_folder = None
+
     if dry_run is False:
         set_idents = entity.identifier("TWEETS for Account", account_info.accountId)
         if len(set_idents) == 0:
-            ingest_tweet_folder: Folder = entity.create_folder(title=TWEETS_FOLDER, description=TWEETS_FOLDER,
-                                                               security_tag=security_tag,
-                                                               parent=account_folder.reference)
+            ingest_tweet_folder = entity.create_folder(title=TWEETS_FOLDER, description=TWEETS_FOLDER,
+                                                       security_tag=security_tag,
+                                                       parent=account_folder.reference)
             entity.add_identifier(ingest_tweet_folder, "TWEETS for Account", account_info.accountId)
         else:
-            ingest_tweet_folder: Folder = set_idents.pop()
+            ingest_tweet_folder = set_idents.pop()
 
         set_idents = entity.identifier("Replies for Account", account_info.accountId)
         if len(set_idents) == 0:
@@ -339,7 +454,7 @@ def ingest_tweets(zip_folder: str, parent_folder: Folder, entity: EntityAPI, upl
                                                          security_tag=security_tag, parent=account_folder.reference)
             entity.add_identifier(ingest_replies_folder, "Replies for Account", account_info.accountId)
         else:
-            ingest_replies_folder: Folder = set_idents.pop()
+            ingest_replies_folder = set_idents.pop()
 
         set_idents = entity.identifier("Retweets for Account", account_info.accountId)
         if len(set_idents) == 0:
@@ -347,7 +462,7 @@ def ingest_tweets(zip_folder: str, parent_folder: Folder, entity: EntityAPI, upl
                                                          security_tag=security_tag, parent=account_folder.reference)
             entity.add_identifier(ingest_retweet_folder, "Retweets for Account", account_info.accountId)
         else:
-            ingest_retweet_folder: Folder = set_idents.pop()
+            ingest_retweet_folder = set_idents.pop()
 
     for jf in json_files:
 
@@ -360,6 +475,7 @@ def ingest_tweets(zip_folder: str, parent_folder: Folder, entity: EntityAPI, upl
 
             set_assets = entity.identifier(TWEET_ID, tweet_id)
             if len(set_assets) > 0:
+                callback(int(current_tweet))
                 continue
 
             tweet['tweet']['user'] = {"name": account_info.accountDisplayName, "screen_name": account_info.username,

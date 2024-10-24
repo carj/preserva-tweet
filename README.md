@@ -63,12 +63,13 @@ Since Twitter archives are only available for a limited time, pay attention to t
 To run the module specify the location of the twitter export using the -a or --archive flag.
 The parent Preservica collection for the tweets must be specified using the -c --collection flag as a UUID
 
+
     $ python -m preserva-tweet -a twitter-2024-10-17.zip -c a7ad52e3-2cb3-4cb5-af2a-3ab08829a2a8
 
 ```
-usage: preserva-tweet [-h] -a ARCHIVE -c COLLECTION [-v] [-d] [-u USERNAME] [-p PASSWORD] [-s SERVER] [-t SECURITY_TAG]
+usage: preserva-tweet [-h] -a ARCHIVE -c COLLECTION [-v] [-d] [-u USERNAME] [-p PASSWORD] [-s SERVER] [-t SECURITY_TAG] [--validate]
 
-Ingest a Twitter Account History into Preservica
+Ingest a Twitter Account History Export into Preservica
 
 options:
   -h, --help            show this help message and exit
@@ -77,14 +78,39 @@ options:
   -c COLLECTION, --collection COLLECTION
                         The Preservica parent collection uuid
   -v, --verbose         Print information as tweets are ingested
-  -d, --dry-run         Validate the twitter export without ingesting
+  -d, --dry-run         process the twitter export without ingesting
   -u USERNAME, --username USERNAME
                         Your Preservica username if not using credentials.properties
   -p PASSWORD, --password PASSWORD
-                        Your Preservica password f not using credentials.properties
+                        Your Preservica password if not using credentials.properties
   -s SERVER, --server SERVER
                         Your Preservica server domain name if not using credentials.properties
   -t SECURITY_TAG, --security-tag SECURITY_TAG
                         The Preservica security tag of the ingested tweets (default is "open")
+  --validate            Validate the twitter ingest to check for missing tweets
+
 
 ```
+
+
+
+## Notes
+
+The preserva-tweet program does need an internet connection to run. Most of the images and video's are fetched from 
+the ZIP archive, but some assets such as thumbnails for the videos are fetched directly from the twitter servers.
+
+For large Twitter accounts the export will come as multiple ZIP files. Just run the program once for each ZIP file.
+preserva-tweet will not ingest the same tweet twice if the script is re-run against the same ZIP file. 
+This also means you can always do an new export 
+in the future and re-run the program to add in any new tweets.
+
+
+## Validate
+
+preserva-tweet has a validation mode which is enabled using the --validate flag.
+This will check that each tweet within the ZIP archive has been ingested into Preservica. This mode can be run after
+the main ingest and will provide details of any tweets which were not ingested successfully.
+
+    $ python -m preserva-tweet -a twitter-2024-10-17.zip -c a7ad52e3-2cb3-4cb5-af2a-3ab08829a2a8 --validate
+
+

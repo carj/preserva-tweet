@@ -21,7 +21,7 @@ if sys.argv[-1] == 'publish':
 # This call to setup() does all the work
 setup(
     name=PKG,
-    version="0.1.0",
+    version="0.3.0",
     description="Python module for ingesting Twitter exports into Preservica",
     long_description=README,
     long_description_content_type="text/markdown",
