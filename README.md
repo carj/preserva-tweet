@@ -115,7 +115,10 @@ For Preservica NewGen interface customers preserva-tweet will create a custom me
 preserva-tweet has a validation mode which is enabled using the --validate flag.
 This will check that each tweet within the ZIP archive has been ingested into Preservica. This mode can be run after
 the main ingest and will provide details of any tweets which were not ingested successfully.
+The results of the ingested and not ingested tweets are written to csv files.
 
-    $ python -m preserva-tweet -a twitter-2024-10-17.zip -c a7ad52e3-2cb3-4cb5-af2a-3ab08829a2a8 --validate
+The validate mode can be run using:
+
+    $ python -m preserva-tweet -a twitter-2024-10-17.zip --validate
 
 

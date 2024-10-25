@@ -9,6 +9,7 @@ licence:    Apache License 2.0
 """
 
 import argparse
+import csv
 import pathlib
 import tempfile
 import xml
@@ -17,7 +18,7 @@ from typing import Generator
 from urllib.parse import urlparse
 from xml.etree import ElementTree
 import shutil
-from dateutil import *
+
 from dateutil.parser import *
 from pyPreservica import *
 
@@ -41,58 +42,49 @@ TWITTER_SCHEMA_NS = "http://www.preservica.com/metadata/group/twitter"
 
 
 def group_metadata(metadata: MetadataGroupsAPI):
-    # does Twitter metadata
-    twitter_group_exists = False
+    """
+    Add a NewGen Metadata Group into the tenancy if
+    it does not already exist
+
+    This will hold the tweet metadata
+
+    :param metadata: MetadataGroupsAPI client
+    :return:
+    """
+    # does Twitter metadata group already exist
     for group in metadata.groups():
         if group.schemaUri == TWITTER_SCHEMA_NS:
-            twitter_group_exists = True
-            break
+            return
 
-    if not twitter_group_exists:
-        fields = []
-        fields.append(GroupField(field_id="tweet_id", name="tweet_id", field_type=GroupFieldType.STRING, visible=True,
-                                 indexed=True, editable=True, minOccurs=1, maxOccurs=1))
-        fields.append(GroupField(field_id="full_text", name="Full Text", field_type=GroupFieldType.STRING, visible=True,
-                                 indexed=True, editable=True, minOccurs=1, maxOccurs=1))
-        fields.append(GroupField(field_id="created_at", name="Created At", field_type=GroupFieldType.DATE, visible=True,
-                                 indexed=True, editable=True, minOccurs=1, maxOccurs=1))
-        fields.append(
-            GroupField(field_id="screen_name_sender", name="User Name", field_type=GroupFieldType.STRING, visible=True,
-                       indexed=True, editable=True))
+    fields = [GroupField(field_id="tweet_id", name="tweet_id", field_type=GroupFieldType.STRING, visible=True,
+                         indexed=True, editable=True, minOccurs=1, maxOccurs=1),
+              GroupField(field_id="full_text", name="Full Text", field_type=GroupFieldType.STRING, visible=True,
+                         indexed=True, editable=True, minOccurs=1, maxOccurs=1),
+              GroupField(field_id="created_at", name="Created At", field_type=GroupFieldType.DATE, visible=True,
+                         indexed=True, editable=True, minOccurs=1, maxOccurs=1),
+              GroupField(field_id="screen_name_sender", name="User Name", field_type=GroupFieldType.STRING,
+                         visible=True, indexed=True, editable=True),
+              GroupField(field_id="hashtag", name="Hash Tag", field_type=GroupFieldType.STRING, visible=True,
+                         indexed=True, editable=True, minOccurs=0, maxOccurs=-1),
+              GroupField(field_id="screen_name_mention", name="Mentioned", field_type=GroupFieldType.STRING,
+                         visible=True, indexed=True, editable=True, minOccurs=0, maxOccurs=-1),
+              GroupField(field_id="in_reply_to_screen_name", name="In Reply To Tweet User",
+                         field_type=GroupFieldType.STRING, visible=True,
+                         indexed=True, editable=True, minOccurs=0, maxOccurs=1),
+              GroupField(field_id="in_reply_to_user_id_str", name="In Reply To Tweet ID",
+                         field_type=GroupFieldType.STRING, visible=True,
+                         indexed=True, editable=True, minOccurs=0, maxOccurs=1),
+              GroupField(field_id="retweet", name="Retweets",
+                         field_type=GroupFieldType.NUMBER, visible=True,
+                         indexed=True, editable=True, minOccurs=0, maxOccurs=1),
+              GroupField(field_id="likes", name="Likes",
+                         field_type=GroupFieldType.NUMBER, visible=True,
+                         indexed=True, editable=True, minOccurs=0, maxOccurs=1),
+              GroupField(field_id="expanded_url", name="URLS",
+                         field_type=GroupFieldType.STRING, visible=True,
+                         indexed=True, editable=True, minOccurs=0, maxOccurs=-1)]
 
-        fields.append(
-            GroupField(field_id="hashtag", name="Hash Tag", field_type=GroupFieldType.STRING, visible=True,
-                       indexed=True, editable=True, minOccurs=0, maxOccurs=-1))
-
-        fields.append(
-            GroupField(field_id="screen_name_mention", name="Mentioned", field_type=GroupFieldType.STRING, visible=True,
-                       indexed=True, editable=True, minOccurs=0, maxOccurs=-1))
-
-        fields.append(
-            GroupField(field_id="in_reply_to_screen_name", name="In Reply To Tweet User",
-                       field_type=GroupFieldType.STRING, visible=True,
-                       indexed=True, editable=True, minOccurs=0, maxOccurs=1))
-        fields.append(
-            GroupField(field_id="in_reply_to_user_id_str", name="In Reply To Tweet ID",
-                       field_type=GroupFieldType.STRING, visible=True,
-                       indexed=True, editable=True, minOccurs=0, maxOccurs=1))
-
-        fields.append(
-            GroupField(field_id="retweet", name="Retweets",
-                       field_type=GroupFieldType.NUMBER, visible=True,
-                       indexed=True, editable=True, minOccurs=0, maxOccurs=1))
-
-        fields.append(
-            GroupField(field_id="likes", name="Likes",
-                       field_type=GroupFieldType.NUMBER, visible=True,
-                       indexed=True, editable=True, minOccurs=0, maxOccurs=1))
-
-        fields.append(
-            GroupField(field_id="expanded_url", name="URLS",
-                       field_type=GroupFieldType.STRING, visible=True,
-                       indexed=True, editable=True, minOccurs=0, maxOccurs=-1))
-
-        metadata.add_group(group_name="Twitter", group_description="Tweet Metadata", fields=fields)
+    metadata.add_group(group_name="Twitter", group_description="Tweet Metadata", fields=fields)
 
 
 def main():
@@ -103,33 +95,33 @@ def main():
 
     :return: 0
     """
-    parser = argparse.ArgumentParser(
+    cmd_parser = argparse.ArgumentParser(
         prog='preserva-tweet',
         description='Ingest a Twitter Account History Export into Preservica',
         epilog='')
 
-    parser.add_argument("-a", "--archive", type=pathlib.Path, help="Twitter export ZIP archive path", required=True)
-    parser.add_argument("-c", "--collection", type=str, help="The Preservica parent collection uuid", required=True)
+    cmd_parser.add_argument("-a", "--archive", type=pathlib.Path, help="Twitter export ZIP archive path", required=True)
+    cmd_parser.add_argument("-c", "--collection", type=str, help="The Preservica parent collection uuid", required=False)
 
-    parser.add_argument("-v", "--verbose", action='store_const', help="Print information as tweets are ingested",
-                        required=False, default=False, const=True)
-    parser.add_argument("-d", "--dry-run", help="process the twitter export without ingesting",
-                        default=False, action='store_const', const=True)
+    cmd_parser.add_argument("-v", "--verbose", action='store_const',
+                            help="Print information as tweets are ingested", required=False, default=False, const=True)
+    cmd_parser.add_argument("-d", "--dry-run", help="process the twitter export without ingesting",
+                            default=False, action='store_const', const=True)
+    cmd_parser.add_argument("-u", "--username", type=str,
+                            help="Your Preservica username if not using credentials.properties", required=False)
+    cmd_parser.add_argument("-p", "--password", type=str,
+                            help="Your Preservica password if not using credentials.properties", required=False)
+    cmd_parser.add_argument("-s", "--server", type=str,
+                            help="Your Preservica server domain name if not using credentials.properties",
+                            required=False)
+    cmd_parser.add_argument("-t", "--security-tag", type=str, default="open",
+                            help="The Preservica security tag of the ingested tweets (default is \"open\")",
+                            required=False)
 
-    parser.add_argument("-u", "--username", type=str,
-                        help="Your Preservica username if not using credentials.properties", required=False)
-    parser.add_argument("-p", "--password", type=str,
-                        help="Your Preservica password if not using credentials.properties", required=False)
-    parser.add_argument("-s", "--server", type=str,
-                        help="Your Preservica server domain name if not using credentials.properties", required=False)
+    cmd_parser.add_argument("--validate", help="Validate the twitter ingest to check for missing tweets",
+                            default=False, action='store_const', const=True)
 
-    parser.add_argument("-t", "--security-tag", type=str, default="open",
-                        help="The Preservica security tag of the ingested tweets (default is \"open\")", required=False)
-
-    parser.add_argument("--validate", help="Validate the twitter ingest to check for missing tweets",
-                        default=False, action='store_const', const=True)
-
-    args = parser.parse_args()
+    args = cmd_parser.parse_args()
     cmd_line = vars(args)
     archive_path = cmd_line['archive']
 
@@ -170,14 +162,20 @@ def main():
 
     group_metadata(groups)
 
-    # Check the preservica folder uuid provided on the command line is valid
-    try:
-        parent_folder = entity.folder(collection)
-        if verbose:
-            print(f"Ingesting Twitter Archive into {parent_folder.title}")
-    except ReferenceNotFoundException:
-        print(f"The collection uuid has not be found")
+    if collection is None:
+        print(f"The collection uuid has not be found, specify the collection with the -c flag")
         return 1
+
+    if validate_ingest is False:
+        # Check the Preservica folder uuid provided on the command line is valid
+        try:
+            parent_folder = entity.folder(collection)
+            if verbose:
+                print(f"Ingesting Twitter Archive into {parent_folder.title}")
+        except ReferenceNotFoundException:
+            print(f"The collection uuid has not be found")
+            return 1
+
 
     if verbose:
         print(entity)
@@ -420,29 +418,45 @@ def validate(zip_folder: str, entity: EntityAPI, verbose: bool):
     not_ingested = []
 
     print(f"The Archive contains {total_tweets} tweets")
-    for jf in json_files:
 
-        tweet_json = os.path.join(zip_folder, jf['fileName'])
+    if os.path.exists('ingested.csv') and os.path.isfile('ingested.csv'):
+        os.remove('ingested.csv')
 
-        for tweet in split_into_docs(tweet_json, jf['globalName']):
-            tweet_id: str = tweet['tweet']['id_str']
+    if os.path.exists('not_ingested.csv') and os.path.isfile('not_ingested.csv'):
+        os.remove('not_ingested.csv')
 
-            set_assets = entity.identifier(TWEET_ID, tweet_id)
-            if len(set_assets) > 0:
-                print(f"Tweet {tweet_id} has been ingested")
-            else:
-                print(f"Tweet {tweet_id} has not been ingested")
-                not_ingested.append(tweet['tweet'])
+    ingested_count: int = 0
+    not_ingested_count: int = 0
 
-    if len(not_ingested) == 0:
+    with open('ingested.csv', newline='', mode='wt', encoding='utf-8') as completed_file:
+        completed_writer = csv.writer(completed_file, delimiter=' ', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+        completed_writer.writerow(['Tweet ID', 'Text', 'Created At', 'Preservica ID'])
+        with open('not_ingested.csv', newline='', mode='wt', encoding='utf-8') as not_completed_file:
+            not_completed_writer = csv.writer(not_completed_file, delimiter=' ', quotechar='|',
+                                              quoting=csv.QUOTE_MINIMAL)
+            not_completed_writer.writerow(['Tweet ID', 'Text', 'Created At'])
+            for jf in json_files:
+                tweet_json = os.path.join(zip_folder, jf['fileName'])
+                for tweet in split_into_docs(tweet_json, jf['globalName']):
+                    tweet_id: str = tweet['tweet']['id_str']
+                    title = tweet['tweet']['full_text']
+                    title = (title[:75] + '..') if len(title) > 75 else title
+                    print(f"checking {title} ")
+                    set_assets = entity.identifier(TWEET_ID, tweet_id)
+                    if len(set_assets) > 0:
+                        e = set_assets.pop()
+                        ingested_count = ingested_count + 1
+                        completed_writer.writerow([tweet_id, title, tweet['tweet']['created_at'], e.reference])
+                    else:
+                        not_ingested_count = not_ingested_count + 1
+                        not_completed_writer.writerow([tweet_id, title, tweet['tweet']['created_at']])
+
+    if not_ingested_count == 0:
         print(f"All Tweets have beem ingested")
     else:
-        print(f"The following tweets have not been ingested")
-        for t in not_ingested:
-            title = t['full_text']
-            title = (title[:50] + '..') if len(title) > 50 else title
-            print(f"{t['id_str']}: {title}")
         print("")
+        print(f"{not_ingested_count} tweets have not been ingested")
+        print("Details can be found in the csv files")
         print(f"** Rerun the script again to ingest the missing tweets **")
 
 
